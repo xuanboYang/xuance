@@ -1,0 +1,124 @@
+"""
+Proximal Policy Optimization with KL divergence (PPO-KL)
+Paper link: https://arxiv.org/pdf/1707.06347.pdf
+Implementation: Pytorch
+"""
+import paddle
+import numpy as np
+from paddle import nn
+from xuance.paddlepaddle.learners import Learner
+from argparse import Namespace
+from xuance.paddlepaddle.utils.operations import merge_distributions
+from paddle.optimizer import Adam
+from paddle.optimizer.lr import LinearWarmup
+
+
+class PPOKL_Learner(Learner):
+    def __init__(self,
+                 config: Namespace,
+                 policy: nn.Layer):
+        super(PPOKL_Learner, self).__init__(config, policy)
+        # self.optimizer = torch.optim.Adam(self.policy.parameters(), self.config.learning_rate, eps=1e-5)
+        # self.scheduler = torch.optim.lr_scheduler.LinearLR(self.optimizer,
+        #                                                    start_factor=1.0,
+        #                                                    end_factor=self.end_factor_lr_decay,
+        #                                                    total_iters=self.config.running_steps)
+        # 定义 Adam 优化器
+        self.optimizer = Adam(
+            learning_rate=self.config.learning_rate,
+            epsilon=1e-5,
+            parameters=self.policy.parameters()
+        )
+        # 定义线性学习率调度器（LinearWarmup）
+        self.scheduler = LinearWarmup(
+            learning_rate=self.config.learning_rate,  # 初始学习率
+            warmup_steps=self.config.running_steps,  # 总步数（等价于 total_iters）
+            start_lr=self.config.learning_rate * 1.0,  # 起始学习率（等价于 start_factor * base_lr）
+            end_lr=self.config.learning_rate * self.end_factor_lr_decay,  # 最终学习率（等价于 end_factor * base_lr）
+            verbose=False  # 是否打印学习率信息
+        )
+
+        self.mse_loss = nn.MSELoss()
+        self.vf_coef = config.vf_coef
+        self.ent_coef = config.ent_coef
+        self.target_kl = config.target_kl
+        self.kl_coef = config.kl_coef
+
+    def clip_grad_norm_(self, parameters, max_norm, norm_type=2.0):
+        if isinstance(parameters, paddle.Tensor):
+            parameters = [parameters]
+
+        norm_type = float(norm_type)
+        total_norm = 0.0
+
+        for p in parameters:
+            if p.grad is not None:
+                param_norm = paddle.norm(p.grad, norm_type).item()
+                total_norm += param_norm ** norm_type
+
+        total_norm = total_norm ** (1. / norm_type)
+        clip_coef = max_norm / (total_norm + 1e-6)
+
+        if clip_coef < 1:
+            for p in parameters:
+                if p.grad is not None:
+                    p.grad.scale_(clip_coef)
+
+        return total_norm
+
+    def update(self, **samples):
+        self.iterations += 1
+        obs_batch = paddle.to_tensor(samples['obs']).to(self.device)
+        act_batch = paddle.to_tensor(samples['actions']).to(self.device)
+        ret_batch = paddle.to_tensor(samples['returns']).to(self.device)
+        adv_batch = paddle.to_tensor(samples['advantages']).to(self.device)
+        old_dists = samples['aux_batch']['old_dist']
+
+        _, a_dist, v_pred = self.policy(obs_batch)
+        log_prob = a_dist.log_prob(act_batch)
+        old_dist = merge_distributions(old_dists)
+        kl = a_dist.kl_divergence(old_dist).mean()
+        old_logp_batch = old_dist.log_prob(act_batch)
+
+        # ppo-clip core implementations 
+        ratio = (log_prob - old_logp_batch).exp().float()
+        a_loss = -(ratio * adv_batch).mean() + self.kl_coef * kl
+        c_loss = self.mse_loss(v_pred, ret_batch)
+        e_loss = a_dist.entropy().mean()
+        loss = a_loss - self.ent_coef * e_loss + self.vf_coef * c_loss
+        if kl > self.target_kl * 1.5:
+            self.kl_coef = self.kl_coef * 2.
+        elif kl < self.target_kl * 0.5:
+            self.kl_coef = self.kl_coef / 2.
+        self.kl_coef = np.clip(self.kl_coef, 0.1, 20)
+        self.optimizer.clear_grad()
+        loss.backward()
+        if self.use_grad_clip:
+            # torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.grad_clip_norm)
+            self.clip_grad_norm_(self.policy.parameters(), self.grad_clip_norm)
+        self.optimizer.step()
+        if self.scheduler is not None:
+            self.scheduler.step()
+        # Logger
+        lr = self.optimizer.state_dict()['param_groups'][0]['lr']
+
+        if self.distributed_training:
+            info = {
+                f"actor-loss/rank_{self.rank}": a_loss.item(),
+                f"critic-loss/rank_{self.rank}": c_loss.item(),
+                f"entropy/rank_{self.rank}": e_loss.item(),
+                f"learning_rate/rank_{self.rank}": lr,
+                f"kl/rank_{self.rank}": kl.item(),
+                f"predict_value/rank_{self.rank}": v_pred.mean().item()
+            }
+        else:
+            info = {
+                "actor-loss": a_loss.item(),
+                "critic-loss": c_loss.item(),
+                "entropy": e_loss.item(),
+                "learning_rate": lr,
+                "kl": kl.item(),
+                "predict_value": v_pred.mean().item()
+            }
+
+        return info

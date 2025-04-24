@@ -1,0 +1,111 @@
+开始分批次训练日志
+==================================================
+已将策略设置为训练模式
+批次 1 开始时的模型参数:
+模型训练模式: True
+参数 actor_representation.agent_0.model.0.weight 样本: [-0.05914235  0.13979171  0.21246876 -0.14923027  0.10936297]
+参数 actor_representation.agent_0.model.0.bias 样本: [0. 0. 0. 0. 0.]
+参数 actor_representation.agent_0.model.2.weight 样本: [1. 1. 1. 1. 1.]
+参数 actor_representation.agent_0.model.0.weight: 均值=0.002087, 方差=0.018941
+参数 actor_representation.agent_0.model.0.bias: 均值=0.000000, 方差=0.000000
+参数 actor_representation.agent_0.model.2.weight: 均值=1.000000, 方差=0.000000
+
+批次 1 结束时的模型参数:
+模型训练模式: True
+参数 actor_representation.agent_0.model.0.weight 样本: [-0.05914235  0.13979171  0.21246876 -0.14923027  0.10936297]
+参数 actor_representation.agent_0.model.0.bias 样本: [0. 0. 0. 0. 0.]
+参数 actor_representation.agent_0.model.2.weight 样本: [1. 1. 1. 1. 1.]
+参数 actor_representation.agent_0.model.0.weight: 均值=0.002087, 方差=0.018941
+参数 actor_representation.agent_0.model.0.bias: 均值=0.000000, 方差=0.000000
+参数 actor_representation.agent_0.model.2.weight: 均值=1.000000, 方差=0.000000
+
+找到最新模型目录: ./logs/mappo/mpe/simple_spread_v3/oneflow/simple_spread_v3/seed_42_2025_0312_124636
+==================================================
+已将策略设置为训练模式
+批次 2 开始时的模型参数:
+模型训练模式: True
+参数 actor_representation.agent_0.model.0.weight 样本: [-0.18146501 -0.00147961  0.05141447 -0.18718778 -0.17282116]
+参数 actor_representation.agent_0.model.0.bias 样本: [0. 0. 0. 0. 0.]
+参数 actor_representation.agent_0.model.2.weight 样本: [1. 1. 1. 1. 1.]
+参数 actor_representation.agent_0.model.0.weight: 均值=0.005799, 方差=0.018981
+参数 actor_representation.agent_0.model.0.bias: 均值=0.000000, 方差=0.000000
+参数 actor_representation.agent_0.model.2.weight: 均值=1.000000, 方差=0.000000
+
+批次 2 结束时的模型参数:
+模型训练模式: True
+参数 actor_representation.agent_0.model.0.weight 样本: [-0.18146501 -0.00147961  0.05141447 -0.18718778 -0.17282116]
+参数 actor_representation.agent_0.model.0.bias 样本: [0. 0. 0. 0. 0.]
+参数 actor_representation.agent_0.model.2.weight 样本: [1. 1. 1. 1. 1.]
+参数 actor_representation.agent_0.model.0.weight: 均值=0.005799, 方差=0.018981
+参数 actor_representation.agent_0.model.0.bias: 均值=0.000000, 方差=0.000000
+参数 actor_representation.agent_0.model.2.weight: 均值=1.000000, 方差=0.000000
+
+批次 2 训练完成，检查参数变化...
+模型目录已更新: ./logs/mappo/mpe/simple_spread_v3/oneflow/simple_spread_v3/seed_43_2025_0312_124642
+==================================================
+已将策略设置为训练模式
+批次 3 开始时的模型参数:
+模型训练模式: True
+参数 actor_representation.agent_0.model.0.weight 样本: [ 0.15784611 -0.03180015 -0.1863009  -0.22072348  0.11532463]
+参数 actor_representation.agent_0.model.0.bias 样本: [0. 0. 0. 0. 0.]
+参数 actor_representation.agent_0.model.2.weight 样本: [1. 1. 1. 1. 1.]
+参数 actor_representation.agent_0.model.0.weight: 均值=0.002184, 方差=0.018662
+参数 actor_representation.agent_0.model.0.bias: 均值=0.000000, 方差=0.000000
+参数 actor_representation.agent_0.model.2.weight: 均值=1.000000, 方差=0.000000
+
+批次 3 结束时的模型参数:
+模型训练模式: True
+参数 actor_representation.agent_0.model.0.weight 样本: [ 0.15784611 -0.03180015 -0.1863009  -0.22072348  0.11532463]
+参数 actor_representation.agent_0.model.0.bias 样本: [0. 0. 0. 0. 0.]
+参数 actor_representation.agent_0.model.2.weight 样本: [1. 1. 1. 1. 1.]
+参数 actor_representation.agent_0.model.0.weight: 均值=0.002184, 方差=0.018662
+参数 actor_representation.agent_0.model.0.bias: 均值=0.000000, 方差=0.000000
+参数 actor_representation.agent_0.model.2.weight: 均值=1.000000, 方差=0.000000
+
+批次 3 训练完成，检查参数变化...
+模型目录已更新: ./logs/mappo/mpe/simple_spread_v3/oneflow/simple_spread_v3/seed_44_2025_0312_124654
+==================================================
+已将策略设置为训练模式
+批次 4 开始时的模型参数:
+模型训练模式: True
+参数 actor_representation.agent_0.model.0.weight 样本: [ 0.23052223 -0.0921424   0.02335562  0.08083628 -0.10302673]
+参数 actor_representation.agent_0.model.0.bias 样本: [0. 0. 0. 0. 0.]
+参数 actor_representation.agent_0.model.2.weight 样本: [1. 1. 1. 1. 1.]
+参数 actor_representation.agent_0.model.0.weight: 均值=0.000533, 方差=0.018524
+参数 actor_representation.agent_0.model.0.bias: 均值=0.000000, 方差=0.000000
+参数 actor_representation.agent_0.model.2.weight: 均值=1.000000, 方差=0.000000
+
+批次 4 结束时的模型参数:
+模型训练模式: True
+参数 actor_representation.agent_0.model.0.weight 样本: [ 0.23052223 -0.0921424   0.02335562  0.08083628 -0.10302673]
+参数 actor_representation.agent_0.model.0.bias 样本: [0. 0. 0. 0. 0.]
+参数 actor_representation.agent_0.model.2.weight 样本: [1. 1. 1. 1. 1.]
+参数 actor_representation.agent_0.model.0.weight: 均值=0.000533, 方差=0.018524
+参数 actor_representation.agent_0.model.0.bias: 均值=0.000000, 方差=0.000000
+参数 actor_representation.agent_0.model.2.weight: 均值=1.000000, 方差=0.000000
+
+批次 4 训练完成，检查参数变化...
+模型目录已更新: ./logs/mappo/mpe/simple_spread_v3/oneflow/simple_spread_v3/seed_45_2025_0312_124703
+==================================================
+已将策略设置为训练模式
+批次 5 开始时的模型参数:
+模型训练模式: True
+参数 actor_representation.agent_0.model.0.weight 样本: [ 0.13379987 -0.11405782  0.06356122  0.08684085 -0.11830222]
+参数 actor_representation.agent_0.model.0.bias 样本: [0. 0. 0. 0. 0.]
+参数 actor_representation.agent_0.model.2.weight 样本: [1. 1. 1. 1. 1.]
+参数 actor_representation.agent_0.model.0.weight: 均值=-0.010348, 方差=0.018705
+参数 actor_representation.agent_0.model.0.bias: 均值=0.000000, 方差=0.000000
+参数 actor_representation.agent_0.model.2.weight: 均值=1.000000, 方差=0.000000
+
+批次 5 结束时的模型参数:
+模型训练模式: True
+参数 actor_representation.agent_0.model.0.weight 样本: [ 0.13379987 -0.11405782  0.06356122  0.08684085 -0.11830222]
+参数 actor_representation.agent_0.model.0.bias 样本: [0. 0. 0. 0. 0.]
+参数 actor_representation.agent_0.model.2.weight 样本: [1. 1. 1. 1. 1.]
+参数 actor_representation.agent_0.model.0.weight: 均值=-0.010348, 方差=0.018705
+参数 actor_representation.agent_0.model.0.bias: 均值=0.000000, 方差=0.000000
+参数 actor_representation.agent_0.model.2.weight: 均值=1.000000, 方差=0.000000
+
+批次 5 训练完成，检查参数变化...
+模型目录已更新: ./logs/mappo/mpe/simple_spread_v3/oneflow/simple_spread_v3/seed_46_2025_0312_124712
+==================================================

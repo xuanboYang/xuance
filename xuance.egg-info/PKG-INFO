@@ -1,0 +1,56 @@
+Metadata-Version: 2.2
+Name: xuance
+Version: 1.2.4
+Summary: XuanCe: A Comprehensive and Unified Deep Reinforcement Learning Library.
+Home-page: 
+Download-URL: https://github.com/agi-brain/xuance.git
+Author: Wenzhang Liu, et al.
+Author-email: liu_wzh@foxmail.com
+License: MIT
+Keywords: deep reinforcement learning,software library,PyTorch,TensorFlow2,MindSpore
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Developers
+Classifier: Topic :: Software Development :: Build Tools
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3.6
+Classifier: Programming Language :: Python :: 3.7
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+License-File: LICENSE.txt
+Requires-Dist: numpy
+Requires-Dist: scipy
+Requires-Dist: PyYAML
+Requires-Dist: gym==0.26.2
+Requires-Dist: gymnasium==0.28.1
+Requires-Dist: gym-notices==0.0.8
+Requires-Dist: pygame
+Requires-Dist: tqdm==4.62.3
+Requires-Dist: pyglet==1.5.15
+Requires-Dist: pettingzoo>=1.23.0
+Requires-Dist: tensorboard>=2.11.2
+Requires-Dist: wandb==0.15.3
+Requires-Dist: moviepy==1.0.3
+Requires-Dist: imageio
+Requires-Dist: opencv-python
+Requires-Dist: mpi4py
+Provides-Extra: atari
+Requires-Dist: gym[accept-rom-license]; extra == "atari"
+Requires-Dist: gym[atari]; extra == "atari"
+Requires-Dist: atari-py==0.2.9; extra == "atari"
+Requires-Dist: ale-py==0.7.5; extra == "atari"
+Provides-Extra: box2d
+Requires-Dist: swig==4.2.1; extra == "box2d"
+Requires-Dist: box2d-py==2.3.5; extra == "box2d"
+Dynamic: author
+Dynamic: author-email
+Dynamic: classifier
+Dynamic: description
+Dynamic: download-url
+Dynamic: keywords
+Dynamic: license
+Dynamic: provides-extra
+Dynamic: requires-dist
+Dynamic: summary
+
+XuanCe is an open-source ensemble of Deep Reinforcement Learning (DRL) algorithm implementations. We call it as Xuan-Ce (玄策) in Chinese. "Xuan (玄)" means incredible and magic box, "Ce (策)" means policy. DRL algorithms are sensitive to hyper-parameters tuning, varying in performance with different tricks, and suffering from unstable training processes, therefore, sometimes DRL algorithms seems elusive and "Xuan". This project gives a thorough, high-quality and easy-to-understand implementation of DRL algorithms, and hope this implementation can give a hint on the magics of reinforcement learning. We expect it to be compatible with multiple deep learning toolboxes( PyTorch, TensorFlow, and MindSpore), and hope it can really become a zoo full of DRL algorithms.

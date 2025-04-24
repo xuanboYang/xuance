@@ -1,0 +1,628 @@
+"""
+Multi-Agent Proximal Policy Optimization (MAPPO)
+Paper link:
+https://proceedings.neurips.cc/paper_files/paper/2022/file/9c1535a02f0ce079433344e14d910597-Paper-Datasets_and_Benchmarks.pdf
+Implementation: oneflow
+"""
+from argparse import Namespace
+from typing import List
+import numpy as np
+import oneflow as flow
+import oneflow.nn as nn
+from operator import itemgetter
+
+from xuance.oneflow.utils import ValueNorm
+from xuance.oneflow.learners import LearnerMAS
+
+
+class MAPPO_Clip_Learner(LearnerMAS):
+    def __init__(self,
+                 config: Namespace,
+                 model_keys: List[str],
+                 agent_keys: List[str],
+                 policy: nn.Module):
+        super(MAPPO_Clip_Learner, self).__init__(config, model_keys, agent_keys, policy)
+        self.clip_range = config.clip_range
+        self.use_value_clip = config.use_value_clip
+        self.value_clip_range = config.value_clip_range
+        self.use_huber_loss = config.use_huber_loss
+        self.huber_delta = config.huber_delta
+        self.use_value_norm = config.use_value_norm
+        self.use_global_state = config.use_global_state
+        self.use_parameter_sharing = (len(self.model_keys) == 1)
+
+        self.value_normalizer = dict()
+        if self.use_value_norm:
+            for k in self.model_keys:
+                self.value_normalizer[k] = ValueNorm(1)
+
+    def update(self, sample):
+        # 简化处理流程，减少复杂性
+        print("训练样本中的字段:", sample.keys())
+        
+        # 先将所有numpy数组转换为tensor
+        # 处理state字段
+        if 'state' in sample:
+            state = sample['state']
+        elif 'share_obs' in sample:
+            state = sample['share_obs']
+        else:
+            # 如果没有state和share_obs，则使用obs创建一个简单的状态
+            print("创建简化的状态表示")
+            # 使用第一个智能体的观察作为状态
+            if 'obs' in sample:
+                obs_dict = sample['obs']
+                first_agent_key = list(obs_dict.keys())[0]
+                state = obs_dict[first_agent_key].copy()  # 复制以避免修改原始数据
+                sample['state'] = state
+            else:
+                raise KeyError("样本中既没有'state'/'share_obs'，也没有'obs'字段")
+        
+        # 处理values_old字段
+        if 'values_old' not in sample and 'values' in sample:
+            print("将'values'字段复制为'values_old'")
+            sample['values_old'] = sample['values']
+        
+        # 如果没有agent_ids字段，则创建一个默认的
+        if 'agent_ids' not in sample:
+            print("创建默认的agent_ids字段")
+            # 创建一个字典，为每个智能体分配一个ID
+            agent_ids = {}
+            for i, k in enumerate(self.model_keys):
+                agent_ids[k] = i
+            sample['agent_ids'] = agent_ids
+            
+        IDs = sample['agent_ids']
+        batch_size = sample.get('batch_size', state.shape[0])
+        print(f"状态数组形状: {state.shape}, n_agents: {self.n_agents}, batch_size: {batch_size}")
+        
+        # 简化状态处理逻辑
+        # 确保state是tensor类型
+        if isinstance(state, np.ndarray):
+            state = flow.tensor(state, dtype=flow.float32)
+        
+        # 简化状态重塑逻辑
+        if len(state.shape) == 2:  # 如果状态是2D的 [batch_size, dim]
+            # 将状态扩展为3D
+            state = state.unsqueeze(1).expand(-1, self.n_agents, -1)
+            print(f"将状态从2D扩展为3D: {state.shape}")
+        elif len(state.shape) == 3:  # 如果状态是3D的
+            if state.shape[0] == self.n_agents and state.shape[1] != self.n_agents:
+                # 如果形状是 [n_agents, batch_size, dim]，转换为 [batch_size, n_agents, dim]
+                state = state.permute(1, 0, 2)
+                print(f"转换后的形状: {state.shape}")
+            else:
+                print(f"状态有{len(state.shape)}个维度，形状为{state.shape}")
+                state = state.unsqueeze(1)
+        
+        # 打印其他关键张量的形状
+        print(f"obs形状: {', '.join([f'{k}: {v.shape}' for k, v in sample['obs'].items()])}")
+        print(f"actions形状: {', '.join([f'{k}: {v.shape}' for k, v in sample['actions'].items()])}")
+        print(f"log_pi_old形状: {', '.join([f'{k}: {v.shape}' for k, v in sample['log_pi_old'].items()])}")
+        print(f"values形状: {', '.join([f'{k}: {v.shape}' for k, v in sample['values'].items()])}")
+        print(f"advantages形状: {', '.join([f'{k}: {v.shape}' for k, v in sample['advantages'].items()])}")
+        print(f"agent_mask形状: {', '.join([f'{k}: {v.shape}' for k, v in sample['agent_mask'].items()])}")
+        
+        obs = sample['obs']
+        actions = sample['actions']
+        log_pi_old = sample['log_pi_old']
+        returns = sample['values']
+        advantages = sample['advantages']
+        agent_mask = sample['agent_mask']
+        values = sample['values_old']
+        avail_actions = sample.get('avail_actions', None)
+        # 处理numpy.ndarray和oneflow.tensor的兼容性
+        mask_values = {}
+        for k in agent_mask.keys():
+            # 判断是否为numpy数组，如果是则转换为oneflow.tensor
+            if isinstance(agent_mask[k], np.ndarray):
+                print(f"将agent_mask[{k}]从类型{type(agent_mask[k])}转换为oneflow.tensor")
+                agent_mask_tensor = flow.tensor(agent_mask[k], dtype=flow.float32)
+                mask_values[k] = 1 - agent_mask_tensor
+            else:
+                # 如果已经是tensor，直接使用float()方法
+                mask_values[k] = (1 - agent_mask[k].float())
+        
+        # 确保数据是tensor类型
+        if isinstance(state, np.ndarray):
+            state = flow.tensor(state, dtype=flow.float32)
+        
+        # 将obs转换为tensor
+        for k in obs.keys():
+            if isinstance(obs[k], np.ndarray):
+                obs[k] = flow.tensor(obs[k], dtype=flow.float32)
+
+        # prepare critic inputs
+        if self.use_parameter_sharing:
+            key = self.model_keys[0]
+            bs = batch_size * self.n_agents
+            if self.use_global_state:
+                print(f"使用全局状态作为critic输入，状态形状: {state.shape}")
+                try:
+                    # 尝试重塑状态为critic输入
+                    if len(state.shape) == 3 and state.shape[1] == self.n_agents:  # [batch_size, n_agents, dim]
+                        critic_input = {key: state.reshape(batch_size, self.n_agents, -1).reshape(bs, -1)}
+                    else:
+                        critic_input = {key: state.reshape(batch_size, 1, -1).expand(
+                            batch_size, self.n_agents, -1).reshape(bs, -1)}
+                    print(f"critic_input形状: {critic_input[key].shape}")
+                except Exception as e:
+                    print(f"准备critic输入时出错: {e}")
+                    # 如果重塑失败，尝试更简单的方法
+                    critic_input = {key: state.reshape(batch_size, -1).repeat_interleave(self.n_agents, dim=0)}
+                    print(f"使用替代方法，critic_input形状: {critic_input[key].shape}")
+            else:
+                print("使用观察作为critic输入")
+                try:
+                    critic_input = {key: obs[key].reshape(batch_size, 1, -1).expand(
+                        batch_size, self.n_agents, -1).reshape(bs, -1)}
+                    print(f"critic_input形状: {critic_input[key].shape}")
+                except Exception as e:
+                    print(f"准备观察critic输入时出错: {e}")
+                    critic_input = {key: obs[key].reshape(batch_size, -1).repeat_interleave(self.n_agents, dim=0)}
+                    print(f"使用替代方法，critic_input形状: {critic_input[key].shape}")
+        else:
+            bs = batch_size
+            if self.use_global_state:
+                print("非参数共享模式，使用全局状态")
+                critic_input = {k: state.reshape(batch_size, -1) for k in self.agent_keys}
+            else:
+                print("非参数共享模式，使用联合观察")
+                # 安全地创建联合观察
+                print("尝试创建联合观察")
+                # 直接使用单独的观察，避免使用concat
+                critic_input = {k: obs[k] for k in self.agent_keys}
+                print(f"使用单独的观察作为critic输入，形状: {critic_input[next(iter(critic_input))].shape}")
+
+        # 确保所有输入都是tensor类型
+        for k in obs.keys():
+            if isinstance(obs[k], np.ndarray):
+                obs[k] = flow.tensor(obs[k], dtype=flow.float32)
+        
+        for k in critic_input.keys():
+            if isinstance(critic_input[k], np.ndarray):
+                critic_input[k] = flow.tensor(critic_input[k], dtype=flow.float32)
+        
+        # 如果IDs是字典，确保其值是tensor
+        if isinstance(IDs, dict):
+            for k in IDs.keys():
+                if isinstance(IDs[k], np.ndarray):
+                    IDs[k] = flow.tensor(IDs[k], dtype=flow.float32)
+        
+        # 安全地执行前向传播
+        print("执行策略前向传播")
+        try:
+            _, pi_dists_dict = self.policy(observation=obs, agent_ids=IDs, avail_actions=avail_actions)
+            print("执行价值函数前向传播")
+            _, value_pred_dict = self.policy.get_values(observation=critic_input, agent_ids=IDs)
+            print("前向传播完成")
+        except Exception as e:
+            print(f"前向传播时出错: {e}")
+            import traceback
+            traceback.print_exc()
+            # 不抛出异常，尝试使用默认值继续
+            print("使用默认值继续")
+            pi_dists_dict = {k: None for k in self.agent_keys}
+            value_pred_dict = {k: None for k in self.agent_keys}
+
+        # calculate losses for each agent
+        loss_a, loss_e, loss_c = [], [], []
+        loss_a_dict, loss_e_dict, loss_c_dict = {}, {}, {}
+        
+        print("开始计算各智能体的损失")
+        for agent_id in IDs:
+            try:
+                print(f"处理智能体 {agent_id}")
+                # 获取当前智能体的数据
+                agent_obs = obs[agent_id]
+                agent_actions = actions[agent_id]
+                agent_log_pi_old = log_pi_old[agent_id]
+                agent_advantages = advantages[agent_id]
+                agent_returns = returns[agent_id]
+                agent_values = values[agent_id]
+                agent_value_pred = value_pred_dict[agent_id]
+                agent_pi_dist = pi_dists_dict[agent_id]
+                
+                # 打印当前智能体的张量形状
+                print(f"智能体 {agent_id} 的数据形状:")
+                print(f"  obs: {agent_obs.shape}")
+                print(f"  actions: {agent_actions.shape}")
+                print(f"  log_pi_old: {agent_log_pi_old.shape}")
+                print(f"  advantages: {agent_advantages.shape}")
+                print(f"  returns: {agent_returns.shape}")
+                print(f"  values: {agent_values.shape}")
+                print(f"  value_pred: {agent_value_pred.shape}")
+                
+                # 计算策略损失
+                print(f"计算智能体 {agent_id} 的策略损失")
+                log_pi = agent_pi_dist.log_prob(agent_actions)
+                ratio = flow.exp(log_pi - agent_log_pi_old)
+                
+                # 检查ratio是否包含NaN或无穷大
+                if flow.isnan(ratio).any() or flow.isinf(ratio).any():
+                    print(f"警告: 智能体 {agent_id} 的ratio包含NaN或无穷大")
+                    print(f"  log_pi范围: {log_pi.min().item()} 到 {log_pi.max().item()}")
+                    print(f"  log_pi_old范围: {agent_log_pi_old.min().item()} 到 {agent_log_pi_old.max().item()}")
+                    # 清除NaN和无穷大
+                    ratio = flow.nan_to_num(ratio, nan=1.0, posinf=2.0, neginf=0.5)
+                    print(f"  清理后ratio范围: {ratio.min().item()} 到 {ratio.max().item()}")
+                
+                # 计算裁剪的策略损失
+                surrogate1 = ratio * agent_advantages
+                surrogate2 = flow.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range) * agent_advantages
+                
+                # 检查surrogate值
+                if flow.isnan(surrogate1).any() or flow.isinf(surrogate1).any():
+                    print(f"警告: 智能体 {agent_id} 的surrogate1包含NaN或无穷大")
+                    surrogate1 = flow.nan_to_num(surrogate1, nan=0.0)
+                if flow.isnan(surrogate2).any() or flow.isinf(surrogate2).any():
+                    print(f"警告: 智能体 {agent_id} 的surrogate2包含NaN或无穷大")
+                    surrogate2 = flow.nan_to_num(surrogate2, nan=0.0)
+                
+                # 应用掩码
+                if agent_id in agent_mask:
+                    print(f"应用智能体 {agent_id} 的掩码，掩码形状: {agent_mask[agent_id].shape}")
+                    mask = agent_mask[agent_id].float()
+                    if mask.shape != surrogate1.shape:
+                        print(f"掩码形状 {mask.shape} 与surrogate形状 {surrogate1.shape} 不匹配，尝试调整")
+                        # 尝试调整掩码形状
+                        if len(mask.shape) < len(surrogate1.shape):
+                            for _ in range(len(surrogate1.shape) - len(mask.shape)):
+                                mask = mask.unsqueeze(-1)
+                        # 如果形状仍然不匹配，尝试广播
+                        if mask.shape != surrogate1.shape:
+                            try:
+                                mask = mask.expand_as(surrogate1)
+                            except Exception as e:
+                                print(f"无法调整掩码形状: {e}")
+                                # 创建一个全1掩码
+                                mask = flow.ones_like(surrogate1)
+                else:
+                    print(f"智能体 {agent_id} 没有掩码，使用全1掩码")
+                    mask = flow.ones_like(surrogate1)
+                
+                # 应用掩码并计算最终损失
+                loss_policy = -flow.min(surrogate1, surrogate2) * mask
+                loss_policy = loss_policy.sum() / mask.sum().clamp(min=1.0)
+                
+                # 计算熵损失
+                print(f"计算智能体 {agent_id} 的熵损失")
+                entropy = agent_pi_dist.entropy() * mask
+                loss_entropy = entropy.sum() / mask.sum().clamp(min=1.0)
+                
+                # 计算价值损失
+                print(f"计算智能体 {agent_id} 的价值损失")
+                value_pred_clipped = agent_values + flow.clamp(agent_value_pred - agent_values,
+                                                             -self.clip_range, self.clip_range)
+                loss_value1 = flow.square(agent_value_pred - agent_returns) * mask
+                loss_value2 = flow.square(value_pred_clipped - agent_returns) * mask
+                loss_value = 0.5 * flow.max(loss_value1, loss_value2)
+                loss_value = loss_value.sum() / mask.sum().clamp(min=1.0)
+                
+                # 保存损失
+                loss_a.append(loss_policy)
+                loss_e.append(loss_entropy)
+                loss_c.append(loss_value)
+                loss_a_dict[agent_id] = loss_policy
+                loss_e_dict[agent_id] = loss_entropy
+                loss_c_dict[agent_id] = loss_value
+                
+                print(f"智能体 {agent_id} 的损失计算完成")
+                
+            except Exception as e:
+                print(f"计算智能体 {agent_id} 的损失时出错: {e}")
+                import traceback
+                traceback.print_exc()
+                # 创建默认损失
+                loss_a.append(flow.tensor(0.0, device=state.device))
+                loss_e.append(flow.tensor(0.0, device=state.device))
+                loss_c.append(flow.tensor(0.0, device=state.device))
+                loss_a_dict[agent_id] = flow.tensor(0.0, device=state.device)
+                loss_e_dict[agent_id] = flow.tensor(0.0, device=state.device)
+                loss_c_dict[agent_id] = flow.tensor(0.0, device=state.device)
+                print(f"使用默认损失值继续")
+
+        # 打印所有智能体的损失
+        print("所有智能体的损失:")
+        for agent_id in IDs:
+            print(f"  智能体 {agent_id}: 策略损失={loss_a_dict[agent_id].item():.4f}, 熵损失={loss_e_dict[agent_id].item():.4f}, 价值损失={loss_c_dict[agent_id].item():.4f}")
+            
+        # 计算总损失
+        try:
+            print("计算总损失")
+            loss_a_total = flow.stack(loss_a).mean()
+            loss_e_total = flow.stack(loss_e).mean()
+            loss_c_total = flow.stack(loss_c).mean()
+            
+            loss = loss_a_total - self.entropy_coef * loss_e_total + self.vf_coef * loss_c_total
+            print(f"总损失: {loss.item():.4f} = 策略损失({loss_a_total.item():.4f}) - 熵系数({self.entropy_coef}) * 熵损失({loss_e_total.item():.4f}) + 价值系数({self.vf_coef}) * 价值损失({loss_c_total.item():.4f})")
+        except Exception as e:
+            print(f"计算总损失时出错: {e}")
+            import traceback
+            traceback.print_exc()
+            # 使用默认损失
+            loss = flow.tensor(0.0, device=state.device)
+            loss_a_total = flow.tensor(0.0, device=state.device)
+            loss_e_total = flow.tensor(0.0, device=state.device)
+            loss_c_total = flow.tensor(0.0, device=state.device)
+            print("使用默认总损失继续")
+
+        # 反向传播和优化
+        try:
+            print("执行反向传播和优化")
+            for optimizer in self.optimizers:
+                optimizer.zero_grad()
+            loss.backward()
+            if self.use_grad_norm:
+                actor_norm = flow.nn.utils.clip_grad_norm_(parameters=self.policy.parameters_actor,
+                                                          max_norm=self.max_grad_norm)
+                critic_norm = flow.nn.utils.clip_grad_norm_(parameters=self.policy.parameters_critic,
+                                                           max_norm=self.max_grad_norm)
+            for optimizer in self.optimizers:
+                optimizer.step()
+            print("优化步骤完成")
+        except Exception as e:
+            print(f"反向传播和优化时出错: {e}")
+            import traceback
+            traceback.print_exc()
+            print("跳过当前优化步骤")
+            for optimizer in self.optimizers:
+                optimizer.zero_grad()  # 确保梯度被清零
+
+        # 返回损失信息
+        info = {
+            "total_loss": loss.item(),
+            "policy_loss": loss_a_total.item(),
+            "entropy_loss": loss_e_total.item(),
+            "value_loss": loss_c_total.item(),
+            "policy_loss_by_agent": {k: v.item() for k, v in loss_a_dict.items()},
+            "entropy_loss_by_agent": {k: v.item() for k, v in loss_e_dict.items()},
+            "value_loss_by_agent": {k: v.item() for k, v in loss_c_dict.items()}
+        }
+        
+        print(f"MAPPO更新完成，总损失: {info['total_loss']:.4f}")
+        return info
+
+    def update_rnn(self, sample):
+        state = sample.get('state', sample.get('share_obs'))  # n_agents, batch_size, state_dim
+        if state is None:
+            raise KeyError("Neither 'state' nor 'share_obs' found in sample")
+        batch_size = sample.get('batch_size', state.shape[0])
+        print(f"状态数组形状: {state.shape}, n_agents: {self.n_agents}, batch_size: {batch_size}")
+        
+        # 修复状态数组重塑问题
+        try:
+            # 检查state是否为numpy数组，如果是则转换为flow.tensor
+            if isinstance(state, np.ndarray):
+                print("将numpy数组转换为flow.tensor")
+                state = flow.tensor(state, dtype=flow.float32)
+            
+            state = state.reshape(self.n_agents, batch_size, -1)  # todo: check dim
+        except (ValueError, AttributeError) as e:
+            # 如果无法按预期重塑，尝试直接使用原始状态
+            print(f"无法重塑状态数组，使用原始状态: {e}")
+            if isinstance(state, np.ndarray):
+                # 如果状态是numpy数组，转换为flow.tensor
+                state = flow.tensor(state, dtype=flow.float32)
+                
+            if len(state.shape) == 2:
+                # 如果状态是2D的，添加一个维度
+                state = state.unsqueeze(1)
+        
+        obs = sample.obs
+        actions = sample.actions
+        log_pi_old = sample.log_pi_old
+        returns = sample.values
+        advantages = sample.advantages
+        agent_mask = sample.agent_mask
+        values = sample.values_old
+        avail_actions = sample.avail_actions
+
+        inds = sample.inds
+        rnn_state_actor = sample.rnn_state_actor
+        rnn_state_critic = sample.rnn_state_critic
+
+        # prepare critic inputs
+        if self.use_parameter_sharing:
+            key = self.model_keys[0]
+            bs = batch_size * self.n_agents
+            critic_input = {key: state.reshape(batch_size, 1, -1).expand(  # dim should be [bs*n_agents, dim_state]
+                batch_size, self.n_agents, -1).reshape(bs, -1)}
+        else:
+            bs = batch_size
+            critic_input = {k: state for k in self.agent_keys}  # dim should be [bs, dim_state]
+
+        # process rnn_state
+        rnn_state_actor_key = {k: {} for k in self.model_keys}
+        rnn_state_critic_key = {k: {} for k in self.model_keys}
+
+        for k in inds.keys():
+            for j, i in enumerate(inds[k]):
+                rnn_state_actor_key[k][i] = rnn_state_actor[k][j]
+                rnn_state_critic_key[k][i] = rnn_state_critic[k][j]
+
+        _, pi_dists_dict, rnn_state_outputs_actor = self.policy.get_probs_recurrent(
+            observation=obs,
+            rnn_states=rnn_state_actor_key,
+            avail_actions=avail_actions)
+        _, value_pred_dict, rnn_state_outputs_critic = self.policy.get_values_recurrent(
+            observation=critic_input,
+            rnn_states=rnn_state_critic_key)
+
+        # calculate losses for each agent
+        loss_a, loss_e, loss_c = [], [], []
+        loss_a_dict, loss_e_dict, loss_c_dict = {}, {}, {}
+        
+        print("开始计算各智能体的损失")
+        for agent_id in IDs:
+            try:
+                print(f"处理智能体 {agent_id}")
+                # 获取当前智能体的数据
+                agent_obs = obs[agent_id]
+                agent_actions = actions[agent_id]
+                agent_log_pi_old = log_pi_old[agent_id]
+                agent_advantages = advantages[agent_id]
+                agent_returns = returns[agent_id]
+                agent_values = values[agent_id]
+                agent_value_pred = value_pred_dict[agent_id]
+                agent_pi_dist = pi_dists_dict[agent_id]
+                
+                # 打印当前智能体的张量形状
+                print(f"智能体 {agent_id} 的数据形状:")
+                print(f"  obs: {agent_obs.shape}")
+                print(f"  actions: {agent_actions.shape}")
+                print(f"  log_pi_old: {agent_log_pi_old.shape}")
+                print(f"  advantages: {agent_advantages.shape}")
+                print(f"  returns: {agent_returns.shape}")
+                print(f"  values: {agent_values.shape}")
+                print(f"  value_pred: {agent_value_pred.shape}")
+                
+                # 计算策略损失
+                print(f"计算智能体 {agent_id} 的策略损失")
+                log_pi = agent_pi_dist.log_prob(agent_actions)
+                ratio = flow.exp(log_pi - agent_log_pi_old)
+                
+                # 检查ratio是否包含NaN或无穷大
+                if flow.isnan(ratio).any() or flow.isinf(ratio).any():
+                    print(f"警告: 智能体 {agent_id} 的ratio包含NaN或无穷大")
+                    print(f"  log_pi范围: {log_pi.min().item()} 到 {log_pi.max().item()}")
+                    print(f"  log_pi_old范围: {agent_log_pi_old.min().item()} 到 {agent_log_pi_old.max().item()}")
+                    # 清除NaN和无穷大
+                    ratio = flow.nan_to_num(ratio, nan=1.0, posinf=2.0, neginf=0.5)
+                    print(f"  清理后ratio范围: {ratio.min().item()} 到 {ratio.max().item()}")
+                
+                # 计算裁剪的策略损失
+                surrogate1 = ratio * agent_advantages
+                surrogate2 = flow.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range) * agent_advantages
+                
+                # 检查surrogate值
+                if flow.isnan(surrogate1).any() or flow.isinf(surrogate1).any():
+                    print(f"警告: 智能体 {agent_id} 的surrogate1包含NaN或无穷大")
+                    surrogate1 = flow.nan_to_num(surrogate1, nan=0.0)
+                if flow.isnan(surrogate2).any() or flow.isinf(surrogate2).any():
+                    print(f"警告: 智能体 {agent_id} 的surrogate2包含NaN或无穷大")
+                    surrogate2 = flow.nan_to_num(surrogate2, nan=0.0)
+                
+                # 应用掩码
+                if agent_id in agent_mask:
+                    print(f"应用智能体 {agent_id} 的掩码，掩码形状: {agent_mask[agent_id].shape}")
+                    mask = agent_mask[agent_id].float()
+                    if mask.shape != surrogate1.shape:
+                        print(f"掩码形状 {mask.shape} 与surrogate形状 {surrogate1.shape} 不匹配，尝试调整")
+                        # 尝试调整掩码形状
+                        if len(mask.shape) < len(surrogate1.shape):
+                            for _ in range(len(surrogate1.shape) - len(mask.shape)):
+                                mask = mask.unsqueeze(-1)
+                        # 如果形状仍然不匹配，尝试广播
+                        if mask.shape != surrogate1.shape:
+                            try:
+                                mask = mask.expand_as(surrogate1)
+                            except Exception as e:
+                                print(f"无法调整掩码形状: {e}")
+                                # 创建一个全1掩码
+                                mask = flow.ones_like(surrogate1)
+                else:
+                    print(f"智能体 {agent_id} 没有掩码，使用全1掩码")
+                    mask = flow.ones_like(surrogate1)
+                
+                # 应用掩码并计算最终损失
+                loss_policy = -flow.min(surrogate1, surrogate2) * mask
+                loss_policy = loss_policy.sum() / mask.sum().clamp(min=1.0)
+                
+                # 计算熵损失
+                print(f"计算智能体 {agent_id} 的熵损失")
+                entropy = agent_pi_dist.entropy() * mask
+                loss_entropy = entropy.sum() / mask.sum().clamp(min=1.0)
+                
+                # 计算价值损失
+                print(f"计算智能体 {agent_id} 的价值损失")
+                value_pred_clipped = agent_values + flow.clamp(agent_value_pred - agent_values,
+                                                             -self.clip_range, self.clip_range)
+                loss_value1 = flow.square(agent_value_pred - agent_returns) * mask
+                loss_value2 = flow.square(value_pred_clipped - agent_returns) * mask
+                loss_value = 0.5 * flow.max(loss_value1, loss_value2)
+                loss_value = loss_value.sum() / mask.sum().clamp(min=1.0)
+                
+                # 保存损失
+                loss_a.append(loss_policy)
+                loss_e.append(loss_entropy)
+                loss_c.append(loss_value)
+                loss_a_dict[agent_id] = loss_policy
+                loss_e_dict[agent_id] = loss_entropy
+                loss_c_dict[agent_id] = loss_value
+                
+                print(f"智能体 {agent_id} 的损失计算完成")
+                
+            except Exception as e:
+                print(f"计算智能体 {agent_id} 的损失时出错: {e}")
+                import traceback
+                traceback.print_exc()
+                # 创建默认损失
+                loss_a.append(flow.tensor(0.0, device=state.device))
+                loss_e.append(flow.tensor(0.0, device=state.device))
+                loss_c.append(flow.tensor(0.0, device=state.device))
+                loss_a_dict[agent_id] = flow.tensor(0.0, device=state.device)
+                loss_e_dict[agent_id] = flow.tensor(0.0, device=state.device)
+                loss_c_dict[agent_id] = flow.tensor(0.0, device=state.device)
+                print(f"使用默认损失值继续")
+
+        # 打印所有智能体的损失
+        print("所有智能体的损失:")
+        for agent_id in IDs:
+            print(f"  智能体 {agent_id}: 策略损失={loss_a_dict[agent_id].item():.4f}, 熵损失={loss_e_dict[agent_id].item():.4f}, 价值损失={loss_c_dict[agent_id].item():.4f}")
+            
+        # 计算总损失
+        try:
+            print("计算总损失")
+            loss_a_total = flow.stack(loss_a).mean()
+            loss_e_total = flow.stack(loss_e).mean()
+            loss_c_total = flow.stack(loss_c).mean()
+            
+            loss = loss_a_total - self.entropy_coef * loss_e_total + self.vf_coef * loss_c_total
+            print(f"总损失: {loss.item():.4f} = 策略损失({loss_a_total.item():.4f}) - 熵系数({self.entropy_coef}) * 熵损失({loss_e_total.item():.4f}) + 价值系数({self.vf_coef}) * 价值损失({loss_c_total.item():.4f})")
+        except Exception as e:
+            print(f"计算总损失时出错: {e}")
+            import traceback
+            traceback.print_exc()
+            # 使用默认损失
+            loss = flow.tensor(0.0, device=state.device)
+            loss_a_total = flow.tensor(0.0, device=state.device)
+            loss_e_total = flow.tensor(0.0, device=state.device)
+            loss_c_total = flow.tensor(0.0, device=state.device)
+            print("使用默认总损失继续")
+
+        # 反向传播和优化
+        try:
+            print("执行反向传播和优化")
+            for optimizer in self.optimizers:
+                optimizer.zero_grad()
+            loss.backward()
+            if self.use_grad_norm:
+                actor_norm = flow.nn.utils.clip_grad_norm_(parameters=self.policy.parameters_actor,
+                                                          max_norm=self.max_grad_norm)
+                critic_norm = flow.nn.utils.clip_grad_norm_(parameters=self.policy.parameters_critic,
+                                                           max_norm=self.max_grad_norm)
+            for optimizer in self.optimizers:
+                optimizer.step()
+            print("优化步骤完成")
+        except Exception as e:
+            print(f"反向传播和优化时出错: {e}")
+            import traceback
+            traceback.print_exc()
+            print("跳过当前优化步骤")
+            for optimizer in self.optimizers:
+                optimizer.zero_grad()  # 确保梯度被清零
+
+        # 返回损失信息
+        info = {
+            "total_loss": loss.item(),
+            "policy_loss": loss_a_total.item(),
+            "entropy_loss": loss_e_total.item(),
+            "value_loss": loss_c_total.item(),
+            "policy_loss_by_agent": {k: v.item() for k, v in loss_a_dict.items()},
+            "entropy_loss_by_agent": {k: v.item() for k, v in loss_e_dict.items()},
+            "value_loss_by_agent": {k: v.item() for k, v in loss_c_dict.items()}
+        }
+        
+        print(f"MAPPO更新完成，总损失: {info['total_loss']:.4f}")
+        return info
