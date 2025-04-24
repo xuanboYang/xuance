@@ -3,6 +3,8 @@
 </div>
 
 # XuanCe: A Comprehensive and Unified Deep Reinforcement Learning Library
+# 基于1.2.4版本，新增支持paddlepaddle框架，版本为3.0.0。基于ARM架构，采用华为昇腾npu调试，测试通过7个算法，可参见test_all_7.py文件
+# 基于1.2.4版本，新增支持oneflow框架，版本为1.0。仅支持CPU（oneflow不支持国产GPU），可参见test_all_7.py文件
 
 [![PyPI](https://img.shields.io/pypi/v/xuance)](https://pypi.org/project/xuance/)
 [![Documentation Status](https://readthedocs.org/projects/xuance/badge/?version=latest)](https://xuance.readthedocs.io)
